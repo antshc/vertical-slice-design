@@ -1,0 +1,215 @@
+= Feature: Create Issue (Vertical Slice Example)
+
+== Folder Structure
+
+[source,text]
+----
+Features/
+└── Issues/
+    └── CreateIssue/
+        ├── Endpoint.cs
+        ├── Handler.cs
+        ├── Request.cs
+        ├── Response.cs
+        └── Mapping.cs
+----
+
+== Endpoint.cs
+
+[source,csharp]
+----
+public static class Endpoint
+{
+    public static void MapCreateIssueEndpoint(this IEndpointRouteBuilder app)
+    {
+        app.MapPost("/repositories/{repositoryId:guid}/issues",
+            async (Guid repositoryId,
+                   Request request,
+                   Handler handler,
+                   CancellationToken ct) =>
+            {
+                var command = new Command(
+                    repositoryId,
+                    request.Title,
+                    request.Description,
+                    request.AssigneeIds);
+
+                var result = await handler.Handle(command, ct);
+
+                return Results.Created(
+                    $"/repositories/{repositoryId}/issues/{result.Id}",
+                    result);
+            });
+    }
+}
+----
+
+== Request.cs
+
+[source,csharp]
+----
+public record Request(
+    string Title,
+    string? Description,
+    List<Guid>? AssigneeIds
+);
+----
+
+== Response.cs
+
+[source,csharp]
+----
+public record Response(
+    Guid Id,
+    string Title,
+    string Status,
+    DateTime CreatedAt
+);
+----
+
+== Handler.cs
+
+[source,csharp]
+----
+public class Handler
+{
+    private readonly AppDbContext _db;
+
+    public Handler(AppDbContext db)
+    {
+        _db = db;
+    }
+
+    public async Task<Response> Handle(Command command, CancellationToken ct)
+    {
+        var repository = await _db.Repositories
+            .FirstOrDefaultAsync(r => r.Id == command.RepositoryId, ct);
+
+        if (repository is null)
+            throw new NotFoundException("Repository not found");
+
+        if (string.IsNullOrWhiteSpace(command.Title))
+            throw new ValidationException("Title is required");
+
+        var issue = new Issue(
+            id: Guid.NewGuid(),
+            repositoryId: command.RepositoryId,
+            title: command.Title,
+            description: command.Description,
+            createdAt: DateTime.UtcNow
+        );
+
+        // Assign users (optional)
+        if (command.AssigneeIds is not null && command.AssigneeIds.Any())
+        {
+            var users = await _db.Users
+                .Where(u => command.AssigneeIds.Contains(u.Id))
+                .ToListAsync(ct);
+
+            issue.Assign(users);
+        }
+
+        _db.Issues.Add(issue);
+
+        await _db.SaveChangesAsync(ct);
+
+        return issue.ToResponse();
+    }
+}
+----
+
+== Command (inside Handler.cs or separate file)
+
+[source,csharp]
+----
+public record Command(
+    Guid RepositoryId,
+    string Title,
+    string? Description,
+    List<Guid>? AssigneeIds
+);
+----
+
+== Mapping.cs
+
+[source,csharp]
+----
+internal static class Mapping
+{
+    public static Response ToResponse(this Issue issue)
+    {
+        return new Response(
+            issue.Id,
+            issue.Title,
+            issue.Status.ToString(),
+            issue.CreatedAt
+        );
+    }
+}
+----
+
+== Domain Entity Example (Issue)
+
+[source,csharp]
+----
+public class Issue
+{
+    public Guid Id { get; }
+    public Guid RepositoryId { get; }
+    public string Title { get; private set; }
+    public string? Description { get; private set; }
+    public IssueStatus Status { get; private set; }
+    public DateTime CreatedAt { get; }
+
+    private readonly List<User> _assignees = new();
+
+    public IReadOnlyCollection<User> Assignees => _assignees;
+
+    public Issue(Guid id, Guid repositoryId, string title, string? description, DateTime createdAt)
+    {
+        Id = id;
+        RepositoryId = repositoryId;
+        Title = title;
+        Description = description;
+        CreatedAt = createdAt;
+        Status = IssueStatus.Open;
+    }
+
+    public void Assign(IEnumerable<User> users)
+    {
+        foreach (var user in users)
+        {
+            if (_assignees.Any(a => a.Id == user.Id))
+                continue;
+
+            _assignees.Add(user);
+        }
+    }
+}
+----
+
+== Key Design Decisions
+
+* Endpoint is thin (only mapping + orchestration)
+* Handler contains use-case logic
+* DTOs (Request/Response) are local to the feature
+* Domain entity contains behavior (Assign)
+* No repository abstraction (EF Core used directly)
+* Mapping is local to the feature
+* Validation is simple and inline (can be replaced with FluentValidation)
+
+== Why This Works
+
+* Each feature is independently evolvable
+* No shared DTO coupling
+* Business logic is explicit and visible
+* Easy to test (Handler is unit-test friendly)
+* Easy to extend (e.g., add labels, events, notifications)
+
+== Possible Extensions
+
+* Add FluentValidation for Request
+* Add domain events (IssueCreated)
+* Add authorization (only repo members can create)
+* Add labels support
+* Add audit logging
