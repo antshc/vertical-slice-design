@@ -1,0 +1,542 @@
+= Modules + Vertical Slice Architecture Summary
+:toc:
+:toclevels: 3
+:sectnums:
+
+== Overview
+
+This project uses a combined architecture style:
+
+* *Module architecture* at the top level
+* *Vertical slice architecture* inside each module
+* *ASP.NET Core 10 Minimal APIs* for HTTP endpoints
+* *EF Core* for persistence
+
+This combination gives a good balance between:
+
+* clear business boundaries
+* self-contained use cases
+* simple navigation
+* maintainable growth over time
+
+The main idea is:
+
+*module first, slice second*
+
+Each business area is represented as a module.
+Each use case inside that business area is represented as a vertical slice.
+
+== Why combine modules and vertical slices
+
+Pure module architecture can become too coarse over time.
+Pure vertical slice architecture at the root can become too flat as the system grows.
+
+Combining both solves these problems:
+
+* modules provide business boundaries
+* slices provide use-case isolation
+* related domain logic stays close to the module
+* each API operation remains small and focused
+
+Example:
+
+* `Employees` is a module
+* `GetEmployees` is a slice inside the `Employees` module
+* `GetEmployeeById` is another slice inside the same module
+
+== High-level architecture principles
+
+=== 1. Organize by business area first
+
+Top-level folders should reflect business concepts, not technical layers.
+
+Use:
+
+* `Employees`
+* `Dependents`
+* `Paychecks`
+
+Do not organize the whole solution primarily by:
+
+* controllers
+* services
+* repositories
+* dtos
+* validators
+
+=== 2. Organize by use case inside the module
+
+Inside each module, each API use case gets its own folder.
+
+Examples:
+
+* `GetEmployees`
+* `GetEmployeeById`
+* `GetEmployeeDependents`
+* `GetEmployeePaycheck`
+
+Each slice should contain only the code needed for that specific use case.
+
+=== 3. Keep endpoints thin
+
+Endpoint classes should only:
+
+* define route mapping
+* define endpoint metadata
+* delegate to the slice handler
+
+Endpoints should not contain core business logic.
+
+=== 4. Keep handlers focused
+
+Each handler should implement exactly one use case.
+
+A handler may:
+
+* query the database
+* call module domain policies
+* assemble the response
+
+A handler should not become a shared service for unrelated operations.
+
+=== 5. Put business rules into module domain code
+
+Business rules that are shared by slices inside a module should live in the module's `Domain` folder.
+
+For example, in the `Paychecks` module:
+
+* `BenefitsCostPolicy`
+* `PaycheckBreakdown`
+
+This keeps business calculations separate from HTTP and persistence concerns.
+
+=== 6. Keep infrastructure outside modules
+
+Technical infrastructure should stay in a shared infrastructure area.
+
+Examples:
+
+* `AppDbContext`
+* EF Core setup
+* dependency injection
+* seed data
+
+This keeps module folders focused on business logic and use cases.
+
+=== 7. Use one shared DbContext at the start
+
+For this project, start with one shared `AppDbContext`.
+
+Reason:
+
+* the modules are closely related
+* `Employees` and `Dependents` belong to the same data model
+* `Paychecks` is mainly a calculation module, not a separate persistence boundary
+
+Do not introduce a separate DbContext per module unless the modules evolve into real bounded contexts.
+
+=== 8. Split EF configuration by module
+
+Keep one `AppDbContext`, but split persistence configuration by module.
+
+Example:
+
+* `Modules/Employees/Persistence/EmployeeConfiguration.cs`
+* `Modules/Dependents/Persistence/DependentConfiguration.cs`
+
+This gives modular persistence organization without the complexity of multiple DbContexts.
+
+== Recommended folder structure
+
+[source,text]
+----
+src/
+└── BenefitsApi/
+    ├── Program.cs
+    ├── Modules/
+    │   ├── Employees/
+    │   │   ├── EmployeesModule.cs
+    │   │   ├── Domain/
+    │   │   │   └── Employee.cs
+    │   │   ├── Persistence/
+    │   │   │   └── EmployeeConfiguration.cs
+    │   │   ├── GetEmployees/
+    │   │   │   ├── Endpoint.cs
+    │   │   │   ├── Handler.cs
+    │   │   │   └── Response.cs
+    │   │   └── GetEmployeeById/
+    │   │       ├── Endpoint.cs
+    │   │       ├── Handler.cs
+    │   │       └── Response.cs
+    │   │
+    │   ├── Dependents/
+    │   │   ├── DependentsModule.cs
+    │   │   ├── Domain/
+    │   │   │   ├── Dependent.cs
+    │   │   │   └── DependentType.cs
+    │   │   ├── Persistence/
+    │   │   │   └── DependentConfiguration.cs
+    │   │   └── GetEmployeeDependents/
+    │   │       ├── Endpoint.cs
+    │   │       ├── Handler.cs
+    │   │       └── Response.cs
+    │   │
+    │   └── Paychecks/
+    │       ├── PaychecksModule.cs
+    │       ├── Domain/
+    │       │   ├── BenefitsCostPolicy.cs
+    │       │   └── PaycheckBreakdown.cs
+    │       └── GetEmployeePaycheck/
+    │           ├── Endpoint.cs
+    │           ├── Handler.cs
+    │           └── Response.cs
+    │
+    ├── Infrastructure/
+    │   ├── Persistence/
+    │   │   ├── AppDbContext.cs
+    │   │   └── SeedData.cs
+    │   └── DependencyInjection.cs
+    │
+    ├── Shared/
+    │   ├── Abstractions/
+    │   │   ├── IModule.cs
+    │   │   └── IEndpoint.cs
+    │   └── Extensions/
+    │       ├── ModuleRegistrationExtensions.cs
+    │       └── EndpointRegistrationExtensions.cs
+    │
+    └── appsettings.json
+----
+
+== Folder structure explanation
+
+=== Program.cs
+
+Application entry point.
+
+Responsibilities:
+
+* create the web application
+* register services
+* configure middleware
+* register modules and endpoints
+
+It should remain small and focused on composition.
+
+=== Modules/
+
+Contains the main business areas of the system.
+
+Each module represents a business boundary.
+Each module owns:
+
+* its domain concepts
+* its use cases
+* its endpoint registration
+* its module-specific persistence configuration
+
+=== Employees module
+
+Contains employee-related business concepts and use cases.
+
+Responsibilities:
+
+* employee domain model
+* employee endpoint registration
+* employee query slices
+
+Example slices:
+
+* `GetEmployees`
+* `GetEmployeeById`
+
+=== Dependents module
+
+Contains dependent-related business concepts and use cases.
+
+Responsibilities:
+
+* dependent domain model
+* relationship types
+* dependent endpoint registration
+* dependent query slice
+
+Example slice:
+
+* `GetEmployeeDependents`
+
+=== Paychecks module
+
+Contains paycheck and benefits calculation logic.
+
+Responsibilities:
+
+* paycheck-related domain rules
+* benefits deduction calculations
+* paycheck endpoint registration
+* paycheck query slice
+
+Example slice:
+
+* `GetEmployeePaycheck`
+
+=== Domain/
+
+Contains reusable business rules and domain models owned by the module.
+
+Examples:
+
+* `Employee`
+* `Dependent`
+* `DependentType`
+* `BenefitsCostPolicy`
+* `PaycheckBreakdown`
+
+Keep only business concepts here.
+Do not place HTTP-specific code here.
+
+=== Persistence/
+
+Contains EF Core entity configuration for the module.
+
+Examples:
+
+* `EmployeeConfiguration`
+* `DependentConfiguration`
+
+Purpose:
+
+* keep persistence mapping close to the owning module
+* avoid a giant centralized mapping folder
+* keep `AppDbContext` thin
+
+=== Slice folders
+
+Each slice represents one use case.
+
+Examples:
+
+* `GetEmployees`
+* `GetEmployeeById`
+* `GetEmployeeDependents`
+* `GetEmployeePaycheck`
+
+Each slice should usually contain:
+
+* `Endpoint.cs`
+* `Handler.cs`
+* `Response.cs`
+
+Optional files when needed:
+
+* `Request.cs`
+* `Validator.cs`
+* `Mapping.cs`
+
+=== Infrastructure/
+
+Contains technical implementation details shared by the whole application.
+
+Examples:
+
+* `AppDbContext`
+* database setup
+* dependency injection
+* seed data
+
+This folder should not contain business use-case logic.
+
+=== Shared/
+
+Contains small cross-cutting abstractions and extensions.
+
+Examples:
+
+* `IModule`
+* `IEndpoint`
+* endpoint registration helpers
+
+Only place truly cross-cutting technical utilities here.
+
+== Key architecture decisions
+
+=== Decision 1: Use modules as the top-level structure
+
+Reason:
+
+* keeps the project aligned with business boundaries
+* makes it easier to scale ownership by business area
+* avoids a flat root folder with many unrelated slices
+
+Impact:
+
+* the project is easier to navigate
+* related concepts stay grouped together
+
+=== Decision 2: Use vertical slices inside each module
+
+Reason:
+
+* each API use case stays self-contained
+* changes are localized to one folder
+* avoids giant module services or endpoint files
+
+Impact:
+
+* easier maintenance
+* safer refactoring
+* easier testing
+
+=== Decision 3: Keep domain logic inside the owning module
+
+Reason:
+
+* business rules should live close to the module that owns them
+* avoids a large shared domain area too early
+* supports future module autonomy
+
+Impact:
+
+* better cohesion
+* clearer ownership
+
+=== Decision 4: Keep one shared AppDbContext for now
+
+Reason:
+
+* current modules are tightly related
+* one shared data model is simpler
+* separate DbContexts would add unnecessary complexity
+
+Impact:
+
+* simpler migrations
+* simpler transactions
+* easier queries across related data
+
+=== Decision 5: Split EF configuration by module
+
+Reason:
+
+* keeps persistence concerns organized by ownership
+* avoids a huge central configuration file
+* allows modular growth without multiple DbContexts yet
+
+Impact:
+
+* `AppDbContext` stays thin
+* module data mapping stays easy to find
+
+=== Decision 6: Prefer thin endpoints and focused handlers
+
+Reason:
+
+* HTTP concerns stay separated from business logic
+* handlers are easy to test
+* route registration remains simple
+
+Impact:
+
+* less coupling
+* smaller files
+* better readability
+
+=== Decision 7: Keep Shared small
+
+Reason:
+
+* shared folders often become dumping grounds
+* most logic should belong either to a module or infrastructure
+
+Impact:
+
+* less hidden coupling
+* clearer placement rules
+
+== Why no UseCases folder per module
+
+A separate `UseCases/` folder is not required.
+
+Preferred:
+
+[source,text]
+----
+Modules/
+└── Employees/
+    ├── GetEmployees/
+    └── GetEmployeeById/
+----
+
+Instead of:
+
+[source,text]
+----
+Modules/
+└── Employees/
+    └── UseCases/
+        ├── GetEmployees/
+        └── GetEmployeeById/
+----
+
+Reason:
+
+* the extra level usually adds little value
+* the module name already provides the business context
+* the slice folder already provides the use-case context
+
+Add `UseCases/` only if the module becomes very large and navigation starts to suffer.
+
+== Example ownership model
+
+=== Employees module owns
+
+* employee entity
+* employee read endpoints
+* employee-specific persistence mapping
+
+=== Dependents module owns
+
+* dependent entity
+* dependent type enum
+* dependent read endpoints
+* dependent-specific persistence mapping
+
+=== Paychecks module owns
+
+* paycheck calculation rules
+* paycheck endpoint
+* benefits policy
+* paycheck response model
+
+== Benefits of this architecture
+
+* strong business-oriented structure
+* focused use-case implementation
+* clear ownership boundaries
+* easy navigation
+* easier growth than technical layering
+* simpler than full modular-monolith separation
+* works well with Minimal APIs
+
+== Trade-offs
+
+* some duplication between slices is acceptable
+* module boundaries are organizational, not hard runtime isolation
+* one shared DbContext means modules still share one persistence boundary
+* future growth may justify stronger module isolation later
+
+These trade-offs are acceptable for a small-to-medium application and keep the design practical.
+
+== Summary
+
+This architecture uses:
+
+* *modules* for business boundaries
+* *vertical slices* for use-case boundaries
+* *one shared DbContext* for simplicity
+* *module-level persistence configuration* for organization
+* *Minimal APIs* for lightweight HTTP endpoints
+
+Recommended rule of thumb:
+
+*use modules to separate business areas, and use vertical slices to separate use cases inside each module*
