@@ -10,92 +10,78 @@ Why:
 
 * Each slice represents an independent use case.
 * Over-abstraction introduces coupling between slices.
-* Premature reuse leads to "god services" and hidden dependencies.
-
----
+* Premature reuse leads to god services and hidden dependencies.
 
 == 2. Types of Duplication
 
-=== 2.1 Harmless Duplication (KEEP IT)
+=== 2.1 Harmless Duplication: Keep It
 
-## [source,csharp]
-
-// Feature A
+[source,csharp]
+----
 public record Response(Guid Id, string Name);
-
-// Feature B
 public record Response(Guid Id, string Name);
----------------------------------------------
+----
 
-Why it's OK:
+DTO duplication is acceptable because DTOs are use-case specific.
 
-* DTOs are use-case specific.
-* Different features evolve independently.
+Rule: Duplicate DTOs freely.
 
-Rule:
-Duplicate DTOs freely.
+=== 2.2 Behavioral Duplication: Extract Carefully
 
----
-
-=== 2.2 Behavioral Duplication (EXTRACT CAREFULLY)
-
-## [source,csharp]
-
-// Feature A
+[source,csharp]
+----
 var total = salary - CalculateBenefits(employee);
+----
 
-// Feature B
-var total = salary - CalculateBenefits(employee);
--------------------------------------------------
+When the same calculation appears in multiple slices, extract the business rule into the domain.
 
-Now duplication exists in business logic.
-
-Extract into Domain:
-
-## [source,csharp]
-
+[source,csharp]
+----
 public static class BenefitsCalculator
 {
-public static decimal Calculate(Employee employee) { ... }
+    public static decimal Calculate(Employee employee)
+    {
+        // business rule here
+    }
 }
--
+----
 
-Rule:
-If logic represents a business rule, move it to Domain.
+Rule: If logic represents a business rule, move it to the Domain.
 
----
+=== 2.3 Infrastructure Duplication: Extract Early
 
-=== 2.3 Infrastructure Duplication (EXTRACT EARLY)
+[source,csharp]
+----
+await dbContext.Employees
+    .Where(employee => employee.IsActive)
+    .ToListAsync(cancellationToken);
+----
 
-## [source,csharp]
+Repeated query patterns can be extracted.
 
-## await dbContext.Employees.Where(...).ToListAsync();
+[source,csharp]
+----
+public static IQueryable<Employee> WithDependents(
+    this IQueryable<Employee> query)
+{
+    return query.Include(employee => employee.Dependents);
+}
+----
 
-Repeated query patterns should be extracted.
+Rule: If duplication is a data access pattern, extract it to Infrastructure.
 
-## [source,csharp]
+== 3. What Should Be Shared
 
-public static IQueryable<Employee> WithDependents(this IQueryable<Employee> query)
-=> query.Include(x => x.Dependents);
-------------------------------------
+=== 3.1 Domain
 
-Rule:
-If duplication is a data access pattern, extract to Infrastructure.
-
----
-
-== 3. What SHOULD Be Shared
-
-=== 3.1 Domain (High Confidence Reuse)
-
-## [source]
-
+[source,text]
+----
 Domain/
-├── Employee.cs
-├── Dependent.cs
-├── Policies/
-│    └── BenefitsPolicy.cs
---------------------------
+|-- Employee.cs
+|-- Dependent.cs
+`-- Policies/
+    `-- BenefitsPolicy.cs
+----
 
 Share:
 
@@ -103,139 +89,113 @@ Share:
 * Invariants
 * Calculations
 
----
+=== 3.2 Infrastructure
 
-=== 3.2 Infrastructure (Technical Reuse)
-
-## [source]
-
+[source,text]
+----
 Infrastructure/
-├── Persistence/
-│    ├── AppDbContext.cs
-│    └── Queries/
-│         └── EmployeeQueries.cs
---------------------------------
+|-- Persistence/
+|   |-- AppDbContext.cs
+|   `-- Queries/
+|       `-- EmployeeQueries.cs
+`-- ExternalServices/
+    `-- WarehouseClient.cs
+----
 
 Share:
 
-* EF queries
+* EF Core query helpers
 * External API clients
 * Caching logic
+* Technical adapters
 
----
+== 4. What Should Not Be Shared
 
-== 4. What Should NOT Be Shared
+=== 4.1 Application Services
 
-=== 4.1 Application Services (ANTI-PATTERN)
+[source,csharp]
+----
+EmployeeService.GetEmployee();
+----
 
-## [source,csharp]
-
-// BAD
-EmployeeService.GetEmployee()
------------------------------
-
-Why:
-
-* Becomes a god object
-* Couples slices
-* Breaks isolation
-
----
+Avoid this because it usually becomes a god object and couples many slices together.
 
 === 4.2 Shared DTOs
 
-## [source,csharp]
-
-// BAD
+[source,csharp]
+----
 Shared/EmployeeDto.cs
----------------------
+----
 
-Why:
-
-* Changes break multiple features
-* Versioning becomes difficult
-
----
+Avoid shared DTOs unless the contract is intentionally shared and stable.
 
 === 4.3 Generic Repositories
 
-## [source,csharp]
+[source,csharp]
+----
+IRepository<T>
+----
 
-## IRepository<T>
-
-Why:
-
-* Hides EF capabilities
-* Adds unnecessary abstraction
-* Leads to anemic domain
-
----
+Avoid generic repositories when EF Core already provides useful query and change-tracking behavior.
 
 == 5. Practical Heuristics
 
-Use the Rule of 3:
+Extract only when all are true:
 
-Extract only when:
-
-1. Used in 3+ slices
-2. Logic is identical
-3. Represents a stable concept
-
----
+. Used in three or more slices.
+. Logic is identical.
+. It represents a stable concept.
 
 == 6. Patterns for Safe Reuse
 
 === 6.1 Domain Policy
 
-## [source,csharp]
-
+[source,csharp]
+----
 public class PaycheckPolicy
 {
-public Money Calculate(Employee employee) { ... }
+    public Money Calculate(Employee employee)
+    {
+        // pure business calculation
+    }
 }
--
-
-* Pure business logic
-* Reusable across slices
-
----
+----
 
 === 6.2 Query Object
 
-## [source,csharp]
-
+[source,csharp]
+----
 public static class EmployeeQueries
 {
-public static IQueryable<Employee> Active(this IQueryable<Employee> query)
-=> query.Where(e => e.IsActive);
+    public static IQueryable<Employee> Active(
+        this IQueryable<Employee> query)
+    {
+        return query.Where(employee => employee.IsActive);
+    }
 }
--
+----
 
-* Reduces EF duplication
-* Keeps handlers clean
+=== 6.3 Feature-Local Helper
 
----
-
-=== 6.3 Feature-Local Helper (NOT Shared)
-
-## [source,csharp]
-
+[source,csharp]
+----
 internal static class Mapping
 {
-public static Response ToResponse(Employee e) => ...
+    public static Response ToResponse(Employee employee)
+    {
+        return new Response(employee.Id, employee.Name);
+    }
 }
--
+----
 
-* Keeps slice isolated
-* Avoids premature reuse
-
----
+Keep helpers local to the slice until reuse is proven.
 
 == 7. Trade-offs
 
-[cols="1,2"]
+[cols="1,2",options="header"]
 |===
-| Scenario | Action
+| Scenario
+| Action
 
 | Same DTO shape
 | Duplicate
@@ -244,7 +204,7 @@ public static Response ToResponse(Employee e) => ...
 | Move to Domain
 
 | Same EF query
-| Extract helper/query
+| Extract helper or query object
 
 | Same orchestration
 | Keep duplicated
@@ -253,62 +213,17 @@ public static Response ToResponse(Employee e) => ...
 | Wait
 |===
 
----
-
 == 8. Mental Model
 
-## [source]
+[source,text]
+----
+Vertical Slice  = Use Case
+Domain          = Truth
+Infrastructure  = Plumbing
+----
 
-Vertical Slice = Use Case
-Domain         = Truth
-Infrastructure = Plumbing
--------------------------
+Slices may duplicate flow and DTO shape, but business truth should live in the domain.
 
-* Slices may duplicate plumbing usage
-* Business rules must remain centralized
-
----
-
-== 9. Real Example
-
-=== Before (Bad Abstraction)
-
-## [source,csharp]
-
-## EmployeeService.CalculatePaycheck(employeeId);
-
-Problems:
-
-* Tight coupling
-* Hard to evolve independently
-
----
-
-=== After (Vertical Slice Friendly)
-
-## [source,csharp]
-
-// Slice A
-var employee = await db.Employees.FindAsync(id);
-var result = PaycheckPolicy.Calculate(employee);
-
-// Slice B
-var employee = await db.Employees
-.Include(x => x.Dependents)
-.FirstAsync();
-
-## var result = PaycheckPolicy.Calculate(employee);
-
-Benefits:
-
-* Each slice controls its data access
-* Business rules are shared correctly
-* No orchestration coupling
-
----
-
-== 10. Final Rule
+== 9. Final Rule
 
 Share *rules*, not *flows*.
-
----
